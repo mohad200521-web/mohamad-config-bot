@@ -1,14 +1,14 @@
-name: Build and Run Telegram Bot
+name: Build and Push Docker Image
 
 on:
 workflow_dispatch:
 push:
 branches:
 - main
+
 jobs:
-build-and-run:
+build:
 runs-on: ubuntu-latest
-timeout-minutes: 350
 
 steps:
   - name: Checkout
@@ -26,18 +26,3 @@ steps:
       context: .
       push: true
       tags: ${{ secrets.DOCKERHUB_USERNAME }}/mohamad:latest
-
-  - name: Run Telegram Bot
-    env:
-      BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
-      GROUP_ID: ${{ secrets.GROUP_ID }}
-      ADMIN_ID: ${{ secrets.ADMIN_ID }}
-      POST_INTERVAL: "3600"
-    run: |
-      docker build -t mohamad-bot .
-      docker run --rm \
-        -e BOT_TOKEN \
-        -e GROUP_ID \
-        -e ADMIN_ID \
-        -e POST_INTERVAL \
-        mohamad-bot
