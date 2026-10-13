@@ -27,7 +27,6 @@ steps:
       context: .
       push: true
       tags: ${{ secrets.DOCKERHUB_USERNAME }}/mohamad:latest
-      load: false
 
   - name: Run Telegram Bot
     env:
