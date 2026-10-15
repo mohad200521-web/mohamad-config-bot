@@ -11,7 +11,7 @@ from telegram.ext import (
 )
 
 BOT_TOKEN = os.environ["BOT_TOKEN"]
-GROUP_ID = os.environ.get("GROUP_ID", "")
+GROUP_ID = os.environ.get("GROUP_ID", "").strip()
 ADMIN_ID = int(os.environ.get("ADMIN_ID", "0"))
 INTERVAL = max(60, int(os.environ.get("POST_INTERVAL", "3600")))
 
@@ -22,8 +22,8 @@ DARK_FILE = DATA_DIR / "DarkTunnel.dark"
 CAPTION_FILE = DATA_DIR / "caption.txt"
 
 
-def is_admin(update):
-    return (
+def is_admin(update: Update) -> bool:
+    return bool(
         update.effective_user
         and update.effective_user.id == ADMIN_ID
     )
@@ -33,14 +33,26 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update):
         return
 
-    await update.message.reply_text(
+    await update.effective_message.reply_text(
         "أهلاً بك!\n\n"
         "1- أرسل ملف Dark Tunnel بامتداد .dark\n"
         "2- أرسل رسالة الكونفيج كنص منفصل.\n"
-        "3- استخدم /publish لنشر الملف والرسالة معاً.\n\n"
-        "/publish - نشر الآن\n"
+        "3- استخدم /publish لنشرهما معاً.\n\n"
+        "/id - معرفة رقم المحادثة الحالية\n"
+        "/publish - النشر الآن\n"
         "/auto - تشغيل النشر التلقائي\n"
         "/stop - إيقاف النشر التلقائي"
+    )
+
+
+async def get_chat_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update):
+        return
+
+    chat = update.effective_chat
+    await update.effective_message.reply_text(
+        f"رقم هذه المحادثة هو:\n{chat.id}\n\n"
+        "إذا كانت هذه مجموعتك، انسخ الرقم وضعه في GROUP_ID."
     )
 
 
@@ -48,26 +60,26 @@ async def receive_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update):
         return
 
-    document = update.message.document
+    document = update.effective_message.document
     filename = (document.file_name or "").lower()
 
-    if document.file_size and document.file_size > 10_000_000:
-        await update.message.reply_text("حجم الملف يجب ألا يتجاوز 10 ميغابايت.")
+    if not filename.endswith(".dark"):
+        await update.effective_message.reply_text(
+            "أرسل ملف Dark Tunnel بامتداد .dark"
+        )
         return
 
-    if not filename.endswith(".dark"):
-        await update.message.reply_text(
-            "أرسل ملف Dark Tunnel بامتداد .dark"
+    if document.file_size and document.file_size > 10_000_000:
+        await update.effective_message.reply_text(
+            "حجم الملف يجب ألا يتجاوز 10 ميغابايت."
         )
         return
 
     tg_file = await document.get_file()
     content = await tg_file.download_as_bytearray()
-
     DARK_FILE.write_bytes(content)
-    context.application.bot_data["dark_file"] = str(DARK_FILE)
 
-    await update.message.reply_text(
+    await update.effective_message.reply_text(
         "تم حفظ ملف Dark Tunnel.\n"
         "الآن أرسل رسالة الكونفيج كنص منفصل."
     )
@@ -77,42 +89,42 @@ async def receive_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update):
         return
 
-    text = (update.message.text or "").strip()
+    text = (update.effective_message.text or "").strip()
 
     if text.startswith("/"):
         return
 
     if not DARK_FILE.exists():
-        await update.message.reply_text(
-            "أرسل ملف .dark أولاً، ثم أرسل رسالة الكونفيج."
+        await update.effective_message.reply_text(
+            "أرسل ملف .dark أولاً."
         )
         return
 
     CAPTION_FILE.write_text(text, encoding="utf-8")
-    context.application.bot_data["caption"] = text
 
-    await update.message.reply_text(
-        "تم حفظ رسالة الكونفيج.\n"
-        "استخدم /publish لنشر الملف والرسالة في منشور واحد."
+    await update.effective_message.reply_text(
+        "تم حفظ رسالة الكونفيج.\nاستخدم /publish للنشر."
     )
 
 
 async def publish_to_group(context: ContextTypes.DEFAULT_TYPE):
     if not GROUP_ID:
-        raise ValueError("GROUP_ID غير مضبوط")
+        raise ValueError(
+            "GROUP_ID غير مضبوط. احصل على رقم المجموعة باستخدام /id."
+        )
 
     if not DARK_FILE.exists():
-        raise ValueError("لم يتم استلام ملف .dark")
+        raise ValueError("لم يتم استلام ملف .dark.")
 
     caption = (
         CAPTION_FILE.read_text(encoding="utf-8")
         if CAPTION_FILE.exists()
-        else ""
+        else "إعدادات Dark Tunnel"
     )
 
     if len(caption) > 1024:
         raise ValueError(
-            "الرسالة أطول من الحد المسموح مع الملف. قصّر النص."
+            "رسالة الكونفيج أطول من الحد المسموح مع الملف. قصّر النص."
         )
 
     with DARK_FILE.open("rb") as file:
@@ -120,7 +132,7 @@ async def publish_to_group(context: ContextTypes.DEFAULT_TYPE):
             chat_id=GROUP_ID,
             document=file,
             filename="DarkTunnel.dark",
-            caption=caption or "إعدادات Dark Tunnel",
+            caption=caption,
         )
 
 
@@ -130,15 +142,16 @@ async def publish(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
         await publish_to_group(context)
-        await update.message.reply_text(
-            "تم نشر ملف Dark Tunnel ورسالة الكونفيج معاً."
-        )
+        await update.effective_message.reply_text("تم نشر الملف والرسالة معاً.")
     except Exception as exc:
-        await update.message.reply_text(f"تعذّر النشر: {exc}")
+        await update.effective_message.reply_text(f"تعذّر النشر: {exc}")
 
 
 async def auto(context: ContextTypes.DEFAULT_TYPE):
-    await publish_to_group(context)
+    try:
+        await publish_to_group(context)
+    except Exception as exc:
+        print(f"فشل النشر التلقائي: {exc}")
 
 
 async def auto_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -146,18 +159,22 @@ async def auto_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if not GROUP_ID:
-        await update.message.reply_text("أضف GROUP_ID إلى متغيرات البيئة أولاً.")
+        await update.effective_message.reply_text(
+            "اضبط GROUP_ID برقم المجموعة أولاً."
+        )
         return
 
     if not DARK_FILE.exists() or not CAPTION_FILE.exists():
-        await update.message.reply_text(
+        await update.effective_message.reply_text(
             "أرسل ملف .dark ورسالة الكونفيج أولاً."
         )
         return
 
     jobs = context.job_queue
     if jobs.get_jobs_by_name("auto_publish"):
-        await update.message.reply_text("النشر التلقائي يعمل بالفعل.")
+        await update.effective_message.reply_text(
+            "النشر التلقائي يعمل بالفعل."
+        )
         return
 
     jobs.run_repeating(
@@ -167,7 +184,7 @@ async def auto_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         name="auto_publish",
     )
 
-    await update.message.reply_text(
+    await update.effective_message.reply_text(
         f"تم تشغيل النشر التلقائي كل {INTERVAL} ثانية."
     )
 
@@ -179,17 +196,16 @@ async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for job in context.job_queue.get_jobs_by_name("auto_publish"):
         job.schedule_removal()
 
-    await update.message.reply_text("تم إيقاف النشر التلقائي.")
+    await update.effective_message.reply_text(
+        "تم إيقاف النشر التلقائي."
+    )
 
 
 def main():
-    app = (
-        Application.builder()
-        .token(BOT_TOKEN)
-        .build()
-    )
+    app = Application.builder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("id", get_chat_id))
     app.add_handler(CommandHandler("publish", publish))
     app.add_handler(CommandHandler("auto", auto_command))
     app.add_handler(CommandHandler("stop", stop))
